@@ -1,0 +1,994 @@
+#+TITLE: Documentation
+* Licencse
+ArrayAnalysis - affyAnalysisQC
+a tool for quality control and pre-processing of Affymetrix array data
+
+Copyright 2010-2011 BiGCaT Bioinformatics
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+* Evaluation of raw data
+** Parse user parameters
+ #+begin_src R :tangle ~/projects/sols/masters/4th_sem/scripts/qcRaw.R
+    library(methods)
+    library(argparser)
+    options_ <- arg_parser("")
+    options_ <- add_argument(options_, "data_directory", help="Full path to directory with .cel files")
+    options_ <- add_argument(options_, "output_directory", help="Full path to the output directory")
+    options_ <- add_argument(options_, "description_file", help="Full path to description file")
+    options_ <- add_argument(options_, "--all", help="Generate all possible plots", flag=TRUE)
+    # Sample quality
+    options_ <- add_argument(options_, "--samplePrep", help="Boolean for sample prep plot", flag=TRUE)
+    options_ <- add_argument(options_, "--ratio", help="Boolean for 3'/5' ratio plots", flag=TRUE)
+    options_ <- add_argument(options_, "--rnadeg", help="Boolean for RNA degradation plot", flag=TRUE)
+    # Hybridization and signal quality
+    options_ <- add_argument(options_, "--hybrid", help="Boolean for spike-in controls", flag=TRUE)
+    options_ <- add_argument(options_, "--bgPlot", help="Boolean for background intensities", flag=TRUE)
+    options_ <- add_argument(options_, "--percPres", help="Boolean for 3'/5' for b-actin and GAPDH", flag=TRUE)
+    options_ <- add_argument(options_, "--posnegDist", help="Boolean for positive and negative controls distribution ", flag=TRUE)
+    options_ <- add_argument(options_, "--control", help="Boolean for plots of the AFFX controls on the arrays", flag=TRUE)
+    # Signal comparability and bias diagnostic
+    options_ <- add_argument(options_, "--scaleFact", help="Boolean for scale factor", flag=TRUE)
+    options_ <- add_argument(options_, "--box", help="Boolean for boxplot of raw intensities", flag=TRUE)
+    options_ <- add_argument(options_, "--density", help="Boolean for density histogram of raw intensities", flag=TRUE)
+    options_ <- add_argument(options_, "--MARaw", help="Boolean for MA-plot", flag=TRUE)
+    options_ <- add_argument(options_, "--layout", help="Boolean for plot of array layout", flag=TRUE)
+    options_ <- add_argument(options_, "--posnegCOI", help="Boolean for positive and negative control plots", flag=TRUE)
+    options_ <- add_argument(options_, "--PLMimage", help="Boolean for 2D PLM plots", flag=TRUE)
+    options_ <- add_argument(options_, "--spatialImage", help="Boolean for 2D images", flag=TRUE)
+    options_ <- add_argument(options_, "--Nuse", help="Boolean for Nuse plot", flag=TRUE)
+    options_ <- add_argument(options_, "--Rle", help="Boolean for RLE plot", flag=TRUE)
+    # Array correlation
+    options_ <- add_argument(options_, "--correlRaw", help="Boolean for correlation plot", flag=TRUE)
+    options_ <- add_argument(options_, "--PCARaw", help="Boolean for PCA analysis plot", flag=TRUE)
+    options_ <- add_argument(options_, "--clusterRaw", help="Boolean for hierarchical clustering", flag=TRUE)
+    # Other options
+    options_ <- add_argument(options_, "--Reorder", help="Reorder arrays by group", flag=TRUE)
+    options_ <- add_argument(options_, "--perGroup", help="Generate MAplot per group. Default is for dataset", flag=TRUE)
+    argv <- parse_args(options_)
+
+    DATA.DIR <-argv$data_directory
+    WORK.DIR <-argv$output_directory
+    description_file <- argv$description_file
+    SCRIPT.DIR <- "~/projects/sols/masters/4th_sem/scripts/"
+
+    if (isTRUE(argv$all)){
+    # Sample quality
+      samplePrep <- TRUE
+      ratio <- TRUE
+      degPlot <-TRUE
+    # Hybridization and signal quality
+      hybrid <- TRUE
+      bgPlot <- TRUE
+      percPres <-TRUE
+      posnegDistrib <- TRUE
+      controlPlot <- TRUE
+    # Signal comparability and bias diagnostic
+      scaleFact <- TRUE
+      boxplotRaw <- TRUE
+      densityRaw <- TRUE
+      MARaw <- TRUE
+      layoutPlot <- TRUE
+      posnegCOI <- TRUE
+      PLMimage <- TRUE
+      spatialImage <- TRUE
+      Nuse <- TRUE
+      Rle<- TRUE
+    # Array correlation
+      correlRaw <- TRUE
+      PCARaw <- TRUE
+      clusterRaw <- TRUE
+    } else {
+    # Sample quality
+      samplePrep <- argv$samplePrep 
+      ratio <- argv$ratio
+      degPlot <- argv$rnadeg
+    # Hybridization and signal quality
+      hybrid <- argv$hybrid
+      bgPlot <- argv$bgPlot
+      percPres <- argv$percPres
+      posnegDistrib <- argv$posnegDist
+      controlPlot <- argv$control
+    # Signal comparability and bias diagnostic
+      scaleFact <- argv$scaleFact
+      boxplotRaw <- argv$box
+      densityRaw <- argv$density
+      MARaw <- argv$MARaw
+      layoutPlot <- argv$layout
+      posnegCOI <- argv$posnegCOI
+      PLMimage<- argv$PLMimage
+      spatialImage <- argv$spatialImage
+      Nuse <- argv$Nuse
+      Rle<- argv$Rle
+    # Array correlation
+      correlRaw <- argv$correl
+      PCARaw <- argv$PCA
+      clusterRaw <- argv$cluster
+    }
+
+    # Other options
+    reOrder <- argv$Reorder
+    perGroup <- argv$perGroup
+ #+end_src
+** Load data and description file
+ Print the version and set memory to maximum on windows x86 systems
+ #+begin_src R :tangle ~/projects/sols/masters/4th_sem/scripts/qcRaw.R
+ version_nb <- "1.0.0"
+ cat("Script run using R version ",R.Version()$major,".",R.Version()$minor,
+   " and affyAnalysisQC version_",version_nb,"\n",sep="")
+
+ if(length(grep("w32",R.Version()$os,fixed=TRUE))>0) memory.size(4095)
+ #+end_src
+
+ Load R libraries and affyAnalysisQC functions
+ #+begin_src R :tangle ~/projects/sols/masters/4th_sem/scripts/qcRaw.R
+   require("affy", quietly = TRUE)
+   require("affycomp", quietly = TRUE)
+   require("affyPLM", quietly = TRUE)
+   require("bioDist", quietly = TRUE)
+   require("simpleaffy", quietly = TRUE)
+   require("affyQCReport", quietly = TRUE)
+   require("plier", quietly = TRUE)
+   if(exists("samplePrep")) require("yaqcaffy", quietly = TRUE)
+   require("gdata", quietly = TRUE) #trim function
+   require("gplots", quietly = TRUE) #heatmap.2 functions
+   print("Libraries have been loaded")
+
+   reload <- function() {
+     source(paste(SCRIPT.DIR,"functions_processingQC.R",sep=""))
+     source(paste(SCRIPT.DIR,"functions_imagesQC.R",sep=""))
+     print ("Functions have been loaded")
+   }
+   reload();
+ #+end_src
+
+ Load the raw data and set the output directory
+ #+begin_src R :tangle ~/projects/sols/masters/4th_sem/scripts/qcRaw.R
+   setwd(DATA.DIR)
+   rawData <- ReadAffy()
+   print("Raw data have been loaded in R")
+
+   setwd(WORK.DIR)
+
+   # Make sure that the CDF environment works
+   rawData <- addStandardCDFenv(rawData)   # if already works, won't be changed
+
+   # Verify the array type (PMMM or PMonly)
+   aType <- getArrayType(rawData)
+
+   # When refName does not exist, use the empty string
+   if(!exists("refName")) refName <- ""
+ #+end_src
+
+ Create array groups and array names
+ #+begin_src R :tangle ~/projects/sols/masters/4th_sem/scripts/qcRaw.R
+ if(description_file !=""){
+   # Information is available: groups will be created
+   # 1- read the description file and trim spaces
+   # 2- define the array names and classes (experimentFactor)
+   if(!exists("DESC.DIR")) DESC.DIR <- ""
+
+   descfile <- paste(DESC.DIR, description_file, sep="")
+   extension<-strsplit(descfile,"\\.")
+   extension<-paste(".",extension[[1]][length(extension[[1]])],sep="")
+   description = NULL;
+   switch(extension,
+          ".txt" = description<-trim(read.delim(descfile, fill = FALSE, as.is=TRUE)),
+          ".csv" = description<-trim(read.csv(descfile, fill = FALSE, as.is=TRUE)),
+          ".xls" = {library(gdata); description<-trim(read.xls(descfile, as.is=TRUE))},
+          ".xlsx" = {library(gdata); description<-trim(read.xls(descfile, as.is=TRUE))}
+	 )
+   if(is.null(description)) stop(paste("extension",extension,"not recognised"))
+
+  # description <- trim(read.table(paste(DESC.DIR, description_file , sep=""),
+  # 	  header = TRUE, as.is = TRUE, sep="\t"))
+
+   if(length(grep(".CEL",toupper(colnames(description)[1]),
+     ignore.case = TRUE))>0) {
+     stop(paste("The description file may not contain a header, as the first",
+     	 "column header seems to be a CEL file name"))
+   }
+   file_order <- match(description[,1],sampleNames(rawData))
+   if(sum(is.na(file_order)) > 0) stop("file names in data directory and file names in description file do not match")
+   if(length(unique(file_order)) < length(file_order)) stop("file names in description file are not unique")
+   rawData <- rawData[,file_order]
+
+   sampleNames(rawData)<- as.character(description[,2])
+   experimentFactor <- factor(description[,3])
+
+   # if required reorder the arrays according to group levels in order to keep
+   # groups together in all plots
+   if(reOrder) {
+     rawData <- rawData[,order(experimentFactor)]
+     experimentFactor <- experimentFactor[order(experimentFactor)]
+   }
+ } else {
+   # No information: arrays will be computed/colored independently
+   sampleNames(rawData) <- as.character(sampleNames(rawData))
+   experimentFactor <- factor(rep(1, length(sampleNames(rawData))))
+   description <- cbind(sampleNames(rawData),sampleNames(rawData),
+     experimentFactor)
+   colnames(description) <- c("ArrayDataFile","SourceName","FactorValue")
+ }
+ #+end_src
+
+ Create colorset and symbolset for the array groups
+ #+begin_src R :tangle ~/projects/sols/masters/4th_sem/scripts/qcRaw.R
+ colList <- colorsByFactor(experimentFactor)
+ plotColors <- colList$plotColors
+ legendColors <- colList$legendColors
+ rm(colList)
+
+ plotSymbols <- 18-as.numeric(experimentFactor)
+ legendSymbols <- sort(plotSymbols, decreasing=TRUE)
+ #+end_src
+
+ Define display parameters for the images
+ #+begin_src R :tangle ~/projects/sols/masters/4th_sem/scripts/qcRaw.R
+ WIDTH <- 1000
+ HEIGHT <- 1414
+ POINTSIZE <- 24
+ if(!exists("maxArray")) maxArray <- 41
+ #+end_src
+** Generate raw data plots
+*** Cover sheet and QC indicator table
+   Create a cover sheet for the report.
+ #+begin_src R :tangle ~/projects/sols/masters/4th_sem/scripts/qcRaw.R
+ #create a cover sheet for the report to be created later
+ #and create a page indicating the naming and grouping used
+ coverAndKeyPlot(description, refName,WIDTH=WIDTH,HEIGHT=HEIGHT)
+ #+end_src
+ 
+ #+begin_src R :tangle ~/projects/sols/masters/4th_sem/scripts/qcRaw.R
+ #create a table with several QC indicators
+ if(samplePrep || ratio || hybrid || percPres || bgPlot || scaleFact) {
+
+   # The indicators are calculated only for PM-MM arrays as the calculation
+   # based on MAS5 does not work for PM-only arrays
+
+   quality <- NULL
+   try(quality <- qc(rawData),TRUE) # calculate Affymetrix quality data for PMMM
+   if(is.null(quality)) {
+     warning("Plots based on the simpleaffy qc function cannot be created for this chip type")
+   }
+
+   if(samplePrep) {
+     # find the data
+     try(yack <- yaqc(rawData),TRUE)
+     if(exists("yack")) {
+       spnames<-rownames(yack@morespikes[grep("(lys|phe|thr|dap).*3", # only 3'
+       rownames(yack@morespikes), ignore.case = TRUE),])
+       sprep<-t(yack@morespikes[spnames,])
+     } else {
+       sprep <- NULL
+       warning("Plots based on the yaqc function cannot be created for this chip type")
+     }
+
+     try({calls<-detection.p.val(rawData)$call
+     lys<-calls[rownames(calls)[grep("lys.*3",rownames(calls),ignore.case=TRUE)],]
+     rm(calls)},TRUE)
+     if(!exists("lys")) {
+       lys <- NULL
+       warning("Plots based on the detection.p.val function cannot be created for this chip type")
+     }else{
+		 if(length(lys) > length(sampleNames(rawData))) { lys<-lys[1,] }
+     }
+   }
+
+   QCtablePlot(rawData,quality,sprep,lys,samplePrep=samplePrep,ratio=ratio,
+       hybrid=hybrid,percPres=percPres,bgPlot=bgPlot,scaleFact=scaleFact,
+	   WIDTH=WIDTH,HEIGHT=HEIGHT,POINTSIZE=POINTSIZE)
+ }
+
+ print("Graphs ready to be computed")
+ #+end_src
+
+*** Sample quality 
+ 1.1 Sample prep controls
+ #+begin_src R :tangle ~/projects/sols/masters/4th_sem/scripts/qcRaw.R
+ if(samplePrep && !is.null(sprep) && !is.null(lys)) {
+   print ("   plot sample prep controls"  )
+   samplePrepPlot(rawData,sprep,lys,plotColors,
+      WIDTH=WIDTH,HEIGHT=HEIGHT,POINTSIZE=POINTSIZE,MAXARRAY=maxArray)
+ }
+ #+end_src
+
+ 1.2 3'/5' ratio - only for PM-MM arrays
+ #+begin_src R :tangle ~/projects/sols/masters/4th_sem/scripts/qcRaw.R
+ if(ratio && !is.null(quality)) {
+   print ("   plot beta-actin & GAPDH 3'/5' ratio")
+   ratioPlot(rawData,quality=quality,experimentFactor,plotColors,legendColors,
+      WIDTH=WIDTH,HEIGHT=HEIGHT,POINTSIZE=POINTSIZE,MAXARRAY=maxArray)
+ }
+ #+end_src
+
+ 1.3 RNA degradation plot
+ #+begin_src R :tangle ~/projects/sols/masters/4th_sem/scripts/qcRaw.R
+ if(degPlot) {
+   print ("   plot degradation plot"  )
+   RNAdegPlot(rawData,plotColors=plotColors,
+      WIDTH=WIDTH,HEIGHT=HEIGHT,POINTSIZE=POINTSIZE,MAXARRAY=maxArray)
+ }
+ #+end_src
+
+*** Hybridization and signal quality
+ 2.1 Spike-in controls - only for PM-MM arrays
+ #+begin_src R :tangle ~/projects/sols/masters/4th_sem/scripts/qcRaw.R
+ if(hybrid && !is.null(quality)) {
+   print ("   plot spike-in hybridization controls"  )
+   hybridPlot(rawData,quality=quality,plotColors,
+      WIDTH=WIDTH,HEIGHT=HEIGHT,POINTSIZE=POINTSIZE,MAXARRAY=maxArray)
+ }
+ #+end_src
+
+ 2.2 Background intensities - only for PM-MM arrays
+ #+begin_src R :tangle ~/projects/sols/masters/4th_sem/scripts/qcRaw.R
+ if(bgPlot && !is.null(quality)) {
+   print ("   plot background intensities"  )
+   backgroundPlot(rawData,quality=quality,experimentFactor,plotColors,legendColors,
+      WIDTH=WIDTH,HEIGHT=HEIGHT,POINTSIZE=POINTSIZE,MAXARRAY=maxArray)
+ }
+ #+end_src
+
+ 2.3 Percent present - only for PM-MM arrays
+ #+begin_src R :tangle ~/projects/sols/masters/4th_sem/scripts/qcRaw.R
+ if(percPres && !is.null(quality)) {
+   print ("   plot percent present"  )
+   percPresPlot(rawData,quality=quality,experimentFactor,plotColors,legendColors,
+      WIDTH=WIDTH,HEIGHT=HEIGHT,POINTSIZE=POINTSIZE,MAXARRAY=maxArray)
+ }
+ #+end_src
+
+ 2.4 Pos and Neg control distribution
+ #+begin_src R :tangle ~/projects/sols/masters/4th_sem/scripts/qcRaw.R
+ if(posnegDistrib) {
+   print ("   plot pos & neg control distribution"  )
+   PNdistrPlot(rawData,
+      WIDTH=WIDTH,HEIGHT=HEIGHT,POINTSIZE=POINTSIZE)
+ }
+ #+end_src
+
+ 2.5 affx control profiles and boxplot
+ #+begin_src R :tangle ~/projects/sols/masters/4th_sem/scripts/qcRaw.R
+ if(controlPlot) {
+   print ("   plot control profiles and/or boxplots")
+   controlPlots(rawData,plotColors,experimentFactor,legendColors,
+      WIDTH=WIDTH,HEIGHT=HEIGHT,POINTSIZE=POINTSIZE,MAXARRAY=maxArray)
+ }
+ #+end_src
+*** Signal comparability and bias diagnostic
+ 3.1.1 Scale factor - only for PM-MM arrays
+ #+begin_src R :tangle ~/projects/sols/masters/4th_sem/scripts/qcRaw.R
+ if(scaleFact && !is.null(quality)) {
+   print ("   plot scale factors")
+   scaleFactPlot(rawData,quality=quality,experimentFactor,plotColors,
+      legendColors,WIDTH=WIDTH,HEIGHT=HEIGHT,POINTSIZE=POINTSIZE,
+	  MAXARRAY=maxArray)
+ }
+ #+end_src
+
+ 3.1.2 Boxplot of raw log-intensities
+ #+begin_src R :tangle ~/projects/sols/masters/4th_sem/scripts/qcRaw.R
+ if(boxplotRaw){
+   print ("   plot boxplot for raw intensities")
+   boxplotFun(Data=rawData, experimentFactor, plotColors, legendColors,
+      WIDTH=WIDTH,HEIGHT=HEIGHT,POINTSIZE=POINTSIZE,MAXARRAY=maxArray)
+ }
+ #+end_src
+
+ 3.1.3 Density histogram of raw log-intensities
+ #+begin_src R :tangle ~/projects/sols/masters/4th_sem/scripts/qcRaw.R
+ if(densityRaw){
+   print ("   plot density histogram for raw intensities")
+   densityFun(Data=rawData, plotColors,
+      WIDTH=WIDTH,HEIGHT=HEIGHT,POINTSIZE=POINTSIZE,MAXARRAY=maxArray)
+   #densityFunUnsmoothed(Data=rawData, plotColors,
+   #  WIDTH=WIDTH,HEIGHT=HEIGHT,POINTSIZE=POINTSIZE,MAXARRAY=maxArray)
+ }
+ #+end_src
+
+ 3.2.1 MA-plot for raw data
+ #+begin_src R :tangle ~/projects/sols/masters/4th_sem/scripts/qcRaw.R
+ if(MARaw){
+   print ("   MA-plots for raw intensities")
+   maFun(Data=rawData, experimentFactor, perGroup,
+      aType=aType,WIDTH=WIDTH,HEIGHT=HEIGHT,MAXARRAY=maxArray)
+ }
+ #+end_src
+
+ 3.3.1 Plot of the array layout
+ #+begin_src R :tangle ~/projects/sols/masters/4th_sem/scripts/qcRaw.R
+ if(layoutPlot) {
+   print ("   plot array reference layout")
+   plotArrayLayout(rawData,aType,
+      WIDTH=WIDTH,HEIGHT=HEIGHT,POINTSIZE=POINTSIZE)
+ }
+ #+end_src
+
+ 3.3.2 Pos and Neg control Position
+ #+begin_src R :tangle ~/projects/sols/masters/4th_sem/scripts/qcRaw.R
+ if(posnegCOI){
+   print ("   Pos/Neg COI")
+   PNposPlot(rawData,WIDTH=WIDTH,HEIGHT=HEIGHT,POINTSIZE=POINTSIZE)
+ }
+ #+end_src
+
+ 3.3.3.1 Create PLM object
+ #+begin_src R :tangle ~/projects/sols/masters/4th_sem/scripts/qcRaw.R
+ # fit a probe level model on the raw data, used by nuse and rle plot as well
+   rawData.pset <- NULL
+   if(spatialImage || PLMimage || Nuse || Rle) {
+   print ("   Fit a probe level model (PLM) on the raw data")
+     rawData.pset <- fitPLM(rawData)
+   }
+ #+end_src
+
+ 3.3.3.2 Spatial images
+ #+begin_src R :tangle ~/projects/sols/masters/4th_sem/scripts/qcRaw.R
+ if(spatialImage) {
+   print ("   2D virtual images")
+   valtry<-try(spatialImages(rawData, Data.pset=rawData.pset, TRUE,FALSE,FALSE,FALSE,
+	           WIDTH=WIDTH,HEIGHT=HEIGHT,POINTSIZE=POINTSIZE),
+		       silent=TRUE)
+   if(class(valtry)=="try-error") {
+	 print("      Use array.image instead of spatialImages function")
+	 if(length(sampleNames(rawData))>6){
+		 # Usage of a median array is interesting when there are enough arrays
+		 array.image(rawData,WIDTH=WIDTH,HEIGHT=HEIGHT,POINTSIZE=POINTSIZE)
+	 }else{
+		 # Usage when few arrays in dataset (one page for 3 arrays -> max: 2 pages)
+		 array.image(rawData,relative=FALSE,col.mod=4,symm=TRUE,WIDTH=WIDTH,
+		   HEIGHT=HEIGHT,POINTSIZE=POINTSIZE)
+	 }
+   }
+ }
+ #+end_src
+
+ 3.3.3.3 PLM images
+ #+begin_src R :tangle ~/projects/sols/masters/4th_sem/scripts/qcRaw.R
+ if(PLMimage) {
+   print ("   Complete set of 2D PLM images")
+   valtry<-try(spatialImages(rawData, Data.pset=rawData.pset, TRUE, TRUE, TRUE, TRUE,
+	             WIDTH=WIDTH,HEIGHT=HEIGHT,POINTSIZE=POINTSIZE,MAXARRAY=maxArray),
+				 silent=TRUE)
+   if(class(valtry)=="try-error") {
+	 print("      Could not create the PLM images.")
+   }
+ }
+ #+end_src
+
+ 3.4.1 NUSE
+ #+begin_src R :tangle ~/projects/sols/masters/4th_sem/scripts/qcRaw.R
+ if(Nuse){
+   print ("   NUSE boxplot")
+   nuseFun(rawData, Data.pset=rawData.pset, experimentFactor, plotColors,
+      legendColors,WIDTH=WIDTH,HEIGHT=HEIGHT,POINTSIZE=POINTSIZE,
+	  MAXARRAY=maxArray)
+ }
+ #+end_src
+
+ 3.4.2 RLE
+ #+begin_src R :tangle ~/projects/sols/masters/4th_sem/scripts/qcRaw.R
+ if(Rle){
+   print ("   RLE boxplot")
+   rleFun(rawData, Data.pset=rawData.pset, experimentFactor, plotColors,
+      legendColors,WIDTH=WIDTH,HEIGHT=HEIGHT,POINTSIZE=POINTSIZE,
+	  MAXARRAY=maxArray)
+ }
+ #+end_src
+ 
+*** Array correlation
+ 4.1 Correlation Plot  of raw data
+ #+begin_src R :tangle ~/projects/sols/masters/4th_sem/scripts/qcRaw.R
+ if(correlRaw){
+   print ("   Correlation plot of raw data")
+   correlFun(Data=rawData, experimentFactor=experimentFactor, legendColors=legendColors,
+      WIDTH=WIDTH,HEIGHT=HEIGHT,POINTSIZE=POINTSIZE,MAXARRAY=maxArray)
+ }
+ #+end_src
+
+ 4.2 PCA analysis of raw data
+ #+begin_src R :tangle ~/projects/sols/masters/4th_sem/scripts/qcRaw.R
+ if(PCARaw){
+   print("   PCA analysis of raw data")
+   pcaFun(Data=rawData, experimentFactor=experimentFactor,
+	 plotColors=plotColors, legendColors=legendColors, plotSymbols=plotSymbols,
+	 legendSymbols=legendSymbols, namesInPlot=((max(nchar(sampleNames(rawData)))<=10)&&
+	 (length(sampleNames(rawData))<=(maxArray/2))),WIDTH=WIDTH,HEIGHT=HEIGHT,
+	 POINTSIZE=POINTSIZE)
+ }
+ #+end_src
+
+ 4.3 Hierarchical Clustering of raw data
+ #+begin_src R :tangle ~/projects/sols/masters/4th_sem/scripts/qcRaw.R
+ if(clusterRaw){
+   print ("   Hierarchical clustering of raw data")
+   clusterFun(Data=rawData, experimentFactor=experimentFactor,
+    clusterOption1=clusterOption1, clusterOption2=clusterOption2,
+    plotColors=plotColors, legendColors=legendColors,
+    plotSymbols=plotSymbols, legendSymbols=legendSymbols,
+    WIDTH=WIDTH,HEIGHT=HEIGHT,POINTSIZE=POINTSIZE,MAXARRAY=maxArray)
+ }
+print("DONE")
+ #+end_src
+ 
+* Preprocessing and normalization 
+** Parse user parameters
+ #+begin_src R :tangle normalize.R
+    library(methods)
+    library(argparser)
+    options_ <- arg_parser("")
+    options_ <- add_argument(options_, "data_directory", help="Path to directory with .cel files")
+    options_ <- add_argument(options_, "output_directory", help="Path to the output directory")
+    options_ <- add_argument(options_, "description_file", help="Path to description file")
+    options_ <- add_argument(options_, "--normMeth", help="Normlization method (available options: 'RMA','GCRMA','PLIER','MAS5'")
+    options_ <- add_argument(options_, "--customCDF", help="Custom CDF (Boolean)", flag=TRUE)
+    options_ <- add_argument(options_, "--reOrder", help="Reorder plots (Boolean)", flag=TRUE)
+    options_ <- add_argument(options_, "--CDFtype", help="Annotation output type. Default is ENSG.")
+    options_ <- add_argument(options_, "--species", help="Species name. If left blank, attempts to deduce species")
+    options_ <- add_argument(options_, "--perGroup", help="Normalize per group or per dataset. Default is dataset", flag=TRUE)
+    options_ <- add_argument(options_, "--PMAcalls", help="Create a table of PMAcalls (PM-MM only)",flag=TRUE) 
+    argv <- parse_args(options_)
+
+    DATA.DIR <-argv$data_directory
+    WORK.DIR <-argv$output_directory
+    description_file <- argv$description_file
+    SCRIPT.DIR <- "~/projects/sols/masters/4th_sem/scripts/"
+
+    normMeth <- argv$normMeth
+    if (is.na(normMeth)) {normMeth <- "RMA"}
+
+    normOption1 <- argv$perGroup
+    if (is.na(normOption1)) {normOption1<- "dataset"}
+
+    customCDF <- argv$customCDF
+
+    CDFtype <- argv$CDFtype
+    if (is.na(CDFtype)) {CDFtype<- "ENSG"}
+
+    species <- argv$species
+    if (is.na(species)) {species <- NULL}
+
+    reOrder <- argv$reOrder
+
+    PMAcalls <- argv$PMAcalls
+ #+end_src
+** Load data and description file
+Print the version and set memory to maximum on windows x86 systems
+ #+begin_src R :tangle normalize.R
+ version_nb <- "1.0.0"
+ cat("Script run using R version ",R.Version()$major,".",R.Version()$minor,
+   " and affyAnalysisQC version_",version_nb,"\n",sep="")
+
+ if(length(grep("w32",R.Version()$os,fixed=TRUE))>0) memory.size(4095)
+ #+end_src
+
+ Load R libraries and affyAnalysisQC functions
+ #+begin_src R :tangle normalize.R
+   require("affy", quietly = TRUE)
+   require("affycomp", quietly = TRUE)
+   require("affyPLM", quietly = TRUE)
+   require("bioDist", quietly = TRUE)
+   require("simpleaffy", quietly = TRUE)
+   require("affyQCReport", quietly = TRUE)
+   require("plier", quietly = TRUE)
+   if(exists("samplePrep")) require("yaqcaffy", quietly = TRUE)
+   require("gdata", quietly = TRUE) #trim function
+   print("Libraries have been loaded")
+
+   reload <- function() {
+     source(paste(SCRIPT.DIR,"functions_processingQC.R",sep=""))
+     source(paste(SCRIPT.DIR,"functions_imagesQC.R",sep=""))
+     print ("Functions have been loaded")
+   }
+   reload();
+ #+end_src
+
+ Load the raw data and set the output directory
+ #+begin_src R :tangle normalize.R
+   setwd(DATA.DIR)
+   rawData <- ReadAffy()
+   print("Raw data have been loaded in R")
+
+   setwd(WORK.DIR)
+
+   # Make sure that the CDF environment works
+   rawData <- addStandardCDFenv(rawData)   # if already works, won't be changed
+
+   # Verify the array type (PMMM or PMonly)
+   aType <- getArrayType(rawData)
+
+   # When refName does not exist, use the empty string
+   if(!exists("refName")) refName <- ""
+ #+end_src
+    
+ Define display parameters for the images
+ #+begin_src R :tangle normalize.R
+ WIDTH <- 1000
+ HEIGHT <- 1414
+ POINTSIZE <- 24
+ if(!exists("maxArray")) maxArray <- 41
+ #+end_src
+ 
+ Create array groups and array names
+ #+begin_src R :tangle normalize.R
+ if(description_file !=""){
+   # Information is available: groups will be created
+   # 1- read the description file and trim spaces
+   # 2- define the array names and classes (experimentFactor)
+   if(!exists("DESC.DIR")) DESC.DIR <- ""
+
+   descfile <- paste(DESC.DIR, description_file, sep="")
+   extension<-strsplit(descfile,"\\.")
+   extension<-paste(".",extension[[1]][length(extension[[1]])],sep="")
+   description = NULL;
+   switch(extension,
+          ".txt" = description<-trim(read.delim(descfile, fill = FALSE, as.is=TRUE)),
+          ".csv" = description<-trim(read.csv(descfile, fill = FALSE, as.is=TRUE)),
+          ".xls" = {library(gdata); description<-trim(read.xls(descfile, as.is=TRUE))},
+          ".xlsx" = {library(gdata); description<-trim(read.xls(descfile, as.is=TRUE))}
+	 )
+   if(is.null(description)) stop(paste("extension",extension,"not recognised"))
+
+  # description <- trim(read.table(paste(DESC.DIR, description_file , sep=""),
+  # 	  header = TRUE, as.is = TRUE, sep="\t"))
+
+   if(length(grep(".CEL",toupper(colnames(description)[1]),
+     ignore.case = TRUE))>0) {
+     stop(paste("The description file may not contain a header, as the first",
+     	 "column header seems to be a CEL file name"))
+   }
+   file_order <- match(description[,1],sampleNames(rawData))
+   if(sum(is.na(file_order)) > 0) stop("file names in data directory and file names in description file do not match")
+   if(length(unique(file_order)) < length(file_order)) stop("file names in description file are not unique")
+   rawData <- rawData[,file_order]
+
+   sampleNames(rawData)<- as.character(description[,2])
+   experimentFactor <- factor(description[,3])
+
+   # if required reorder the arrays according to group levels in order to keep
+   # groups together in all plots
+   if(reOrder) {
+     rawData <- rawData[,order(experimentFactor)]
+     experimentFactor <- experimentFactor[order(experimentFactor)]
+   }
+ } else {
+   # No information: arrays will be computed/colored independently
+   sampleNames(rawData) <- as.character(sampleNames(rawData))
+   experimentFactor <- factor(rep(1, length(sampleNames(rawData))))
+   description <- cbind(sampleNames(rawData),sampleNames(rawData),
+     experimentFactor)
+   colnames(description) <- c("ArrayDataFile","SourceName","FactorValue")
+ }
+ #+end_src
+
+** Run the normalization workflow
+ Check if the chosen normalization method applies to chosen array type
+ #+begin_src R :tangle normalize.R
+ if (aType == "PMonly") {
+   if (normMeth == "MAS5") {
+     warning("MAS5 cannot be applied to PMonly arrays. Changed MAS5 to PLIER")
+     normMeth <- "PLIER"
+   }
+   if (normMeth == "GCRMA") {
+     warning("GCRMA cannot be applied to PMonly arrays. Changed GCRMA to RMA")
+     normMeth <- "RMA"
+   }
+ }
+ #+end_src
+
+ If custom CDF is chosen and the species is not specified, then an attempt will be made to deduce the species.
+ Raw data is then normalized according to chosen method, group, array type and other parameters.
+ #+begin_src R :tangle normalize.R
+ if(!is.null(normMeth)) {
+   if(customCDF) {
+     if(species=="") {
+       warning("Species has not been set and custom cdf requested, attempting to deduce species for chip type")
+       species <- deduceSpecies(rawData@annotation)
+     }
+	 if(species!=""){
+		 normData <- normalizeData(rawData,normMeth,perGroup=(normOption1=="group"),
+		   experimentFactor, aType=aType, customCDF, species, CDFtype,WIDTH=WIDTH,
+		   HEIGHT=HEIGHT)
+	 }else{
+		 warning("Could not define species; the CDF will not be changed")
+		 normData <- normalizeData(rawData,normMeth,perGroup=(normOption1=="group"),
+		   experimentFactor, aType=aType, customCDF,WIDTH=WIDTH,HEIGHT=HEIGHT)
+	 }
+
+   } else {
+     normData <- normalizeData(rawData,normMeth,perGroup=(normOption1=="group"),
+	   experimentFactor, aType=aType, customCDF,WIDTH=WIDTH,HEIGHT=HEIGHT)
+     saveRDS(normData, file = paste0(DATA.DIR,"my_data.rds"))  
+     print("Saving normalized data table")
+
+     normDataTable <- createNormDataTable(normData,
+                                          customCDF=(sum(featureNames(normData)!=featureNames(rawData)[1:length(featureNames(normData))])>0),
+                                          species,
+                                          CDFtype)
+
+   #output normalised expression data to file
+   refName <- sub("(_\\d{4}-\\d{2}-\\d{2}_\\d{2}-\\d{2}_\\d{2})", "", refName)
+   normFileName <- paste(normMeth,"NormData_",refName,".txt",sep="")
+   print(paste("Normalized data table:", normFileName))
+   write.table(normDataTable, normFileName, sep="\t", row.names=FALSE, col.names=TRUE, quote=FALSE)
+   }
+ }
+ #+end_src
+
+ Table of PMA-calls based on the MAS5 algorithm - only for PM-MM arrays
+ #+begin_src R :tangle normalize.R
+ if(PMAcalls) {
+   if(customCDF) {
+     if(species=="") {
+       warning("Species has not been set and custom cdf requested, attempting to deduce species for chip type")
+       species <- deduceSpecies(rawData@annotation)
+     }
+ 	 if(species!=""){
+		 PMAtable <- computePMAtable(rawData,customCDF,species,CDFtype)
+	 }else{
+		 warning("Could not define species; the CDF will not be changed")
+		 PMAtable <- computePMAtable(rawData,customCDF)
+	 }
+   } else {
+     PMAtable <- computePMAtable(rawData,customCDF)
+   }
+   if(!is.null(PMAtable)) {
+     write.table(PMAtable, "PMAtable.txt", sep="\t", row.names=FALSE,
+	   col.names=TRUE, quote=FALSE)
+   }
+ }
+print("DONE")
+ #+end_src
+
+* Evaluation of normalized data
+** Parse user parameters
+ #+begin_src R :tangle ~/projects/sols/masters/4th_sem/scripts/qcNorm.R
+    library(methods)
+    library(argparser)
+    options_ <- arg_parser("")
+    options_ <- add_argument(options_, "data_directory", help="Full path to directory with .cel files")
+    options_ <- add_argument(options_, "output_directory", help="Full path to the output directory")
+    options_ <- add_argument(options_, "description_file", help="Full path to description file")
+    options_ <- add_argument(options_, "--all", help="Generate all possible plots", flag=TRUE)
+    # Signal comparability and bias diagnostic
+    options_ <- add_argument(options_, "--boxplotNorm", help="Boolean for boxplot of normalized intensities", flag=TRUE)
+    options_ <- add_argument(options_, "--densityNorm", help="Boolean for density histogram of normalized intensities", flag=TRUE)
+    options_ <- add_argument(options_, "--MAnorm", help="Boolean for MA-plot", flag=TRUE)
+    options_ <- add_argument(options_, "--posnegCOI", help="Boolean for positive and negative control plots", flag=TRUE)
+    options_ <- add_argument(options_, "--PLMimage", help="Boolean for 2D PLM plots", flag=TRUE)
+    options_ <- add_argument(options_, "--spatialImage", help="Boolean for 2D images", flag=TRUE)
+    options_ <- add_argument(options_, "--Nuse", help="Boolean for Nuse plot", flag=TRUE)
+    options_ <- add_argument(options_, "--Rle", help="Boolean for RLE plot", flag=TRUE)
+    # Array correlation
+    options_ <- add_argument(options_, "--correlNorm", help="Boolean for correlation plot", flag=TRUE)
+    options_ <- add_argument(options_, "--PCANorm", help="Boolean for PCA analysis plot", flag=TRUE)
+    options_ <- add_argument(options_, "--clusterNorm", help="Boolean for hierarchical clustering", flag=TRUE)
+    # Other options
+    options_ <- add_argument(options_, "--Reorder", help="Reorder arrays by group", flag=TRUE)
+    options_ <- add_argument(options_, "--perGroup", help="Generate MAplot per group. Default is for dataset", flag=TRUE)
+    argv <- parse_args(options_)
+
+    DATA.DIR <-argv$data_directory
+    WORK.DIR <-argv$output_directory
+    description_file <- argv$description_file
+    SCRIPT.DIR <- "~/projects/sols/masters/4th_sem/scripts/"
+
+    if (isTRUE(argv$all)){
+    # Signal comparability and bias diagnostic
+      boxplotNorm <- TRUE
+      densityNorm <- TRUE
+      MARaw <- TRUE
+      posnegCOI <- TRUE
+      PLMimage <- TRUE
+      spatialImage <- TRUE
+      Nuse <- TRUE
+      Rle<- TRUE
+    # Array correlation
+      correlNorm <- TRUE
+      PCANorm <- TRUE
+      clusterNorm <- TRUE
+    } else {
+    # Hybridization and signal quality
+      percPres <- argv$percPres
+      posnegDistrib <- argv$posnegDist
+      controlPlot <- argv$control
+    # Signal comparability and bias diagnostic
+      boxplotNorm <- argv$box
+      densityNorm <- argv$density
+      MAnorm <- argv$MARaw
+      posnegCOI <- argv$posnegCOI
+      PLMimage<- argv$PLMimage
+      spatialImage <- argv$spatialImage
+      Nuse <- argv$Nuse
+      Rle<- argv$Rle
+    # Array correlation
+      correlNorm <- argv$correl
+      PCANorm <- argv$PCA
+      clusterNorm <- argv$cluster
+    }
+
+    # Other options
+    reOrder <- argv$Reorder
+    MAOption1 <- argv$perGroup
+    clusterOption1 <- "Spearman" #see comments below
+    clusterOption2 <- "ward" #see comments below
+ #+end_src
+** Load data and description file
+Print the version and set memory to maximum on windows x86 systems
+ #+begin_src R :tangle qcNorm.R
+ version_nb <- "1.0.0"
+ cat("Script run using R version ",R.Version()$major,".",R.Version()$minor,
+   " and affyAnalysisQC version_",version_nb,"\n",sep="")
+
+ if(length(grep("w32",R.Version()$os,fixed=TRUE))>0) memory.size(4095)
+ #+end_src
+
+ Load R libraries and affyAnalysisQC functions
+ #+begin_src R :tangle qcNorm.R
+   require("affy", quietly = TRUE)
+   require("affycomp", quietly = TRUE)
+   require("affyPLM", quietly = TRUE)
+   require("bioDist", quietly = TRUE)
+   require("simpleaffy", quietly = TRUE)
+   require("affyQCReport", quietly = TRUE)
+   require("plier", quietly = TRUE)
+   if(exists("samplePrep")) require("yaqcaffy", quietly = TRUE)
+   require("gdata", quietly = TRUE) #trim function
+   print("Libraries have been loaded")
+
+   reload <- function() {
+     source(paste(SCRIPT.DIR,"functions_processingQC.R",sep=""))
+     source(paste(SCRIPT.DIR,"functions_imagesQC.R",sep=""))
+     print ("Functions have been loaded")
+   }
+   reload();
+   normData <- readRDS(paste0(DATA.DIR,"my_data.rds"))
+ #+end_src
+
+ Create array groups and array names
+ #+begin_src R :tangle ~/projects/sols/masters/4th_sem/scripts/qcNorm.R
+ if(description_file !=""){
+   # Information is available: groups will be created
+   # 1- read the description file and trim spaces
+   # 2- define the array names and classes (experimentFactor)
+   if(!exists("DESC.DIR")) DESC.DIR <- ""
+
+   descfile <- paste(DESC.DIR, description_file, sep="")
+   extension<-strsplit(descfile,"\\.")
+   extension<-paste(".",extension[[1]][length(extension[[1]])],sep="")
+   description = NULL;
+   switch(extension,
+          ".txt" = description<-trim(read.delim(descfile, fill = FALSE, as.is=TRUE)),
+          ".csv" = description<-trim(read.csv(descfile, fill = FALSE, as.is=TRUE)),
+          ".xls" = {library(gdata); description<-trim(read.xls(descfile, as.is=TRUE))},
+          ".xlsx" = {library(gdata); description<-trim(read.xls(descfile, as.is=TRUE))}
+	 )
+   if(is.null(description)) stop(paste("extension",extension,"not recognised"))
+
+  # description <- trim(read.table(paste(DESC.DIR, description_file , sep=""),
+  # 	  header = TRUE, as.is = TRUE, sep="\t"))
+
+   if(length(grep(".CEL",toupper(colnames(description)[1]),
+     ignore.case = TRUE))>0) {
+     stop(paste("The description file may not contain a header, as the first",
+     	 "column header seems to be a CEL file name"))
+   }
+   file_order <- match(description[,1],sampleNames(rawData))
+   if(sum(is.na(file_order)) > 0) stop("file names in data directory and file names in description file do not match")
+   if(length(unique(file_order)) < length(file_order)) stop("file names in description file are not unique")
+   rawData <- rawData[,file_order]
+
+   sampleNames(rawData)<- as.character(description[,2])
+   experimentFactor <- factor(description[,3])
+
+   # if required reorder the arrays according to group levels in order to keep
+   # groups together in all plots
+   if(reOrder) {
+     rawData <- rawData[,order(experimentFactor)]
+     experimentFactor <- experimentFactor[order(experimentFactor)]
+   }
+ } else {
+   # No information: arrays will be computed/colored independently
+   sampleNames(rawData) <- as.character(sampleNames(rawData))
+   experimentFactor <- factor(rep(1, length(sampleNames(rawData))))
+   description <- cbind(sampleNames(rawData),sampleNames(rawData),
+     experimentFactor)
+   colnames(description) <- c("ArrayDataFile","SourceName","FactorValue")
+ }
+ #+end_src
+
+ Create colorset and symbolset for the array groups
+ #+begin_src R :tangle ~/projects/sols/masters/4th_sem/scripts/qcNorm.R
+ colList <- colorsByFactor(experimentFactor)
+ plotColors <- colList$plotColors
+ legendColors <- colList$legendColors
+ rm(colList)
+
+ plotSymbols <- 18-as.numeric(experimentFactor)
+ legendSymbols <- sort(plotSymbols, decreasing=TRUE)
+ #+end_src
+ 
+ Define display parameters for the images
+ #+begin_src R :tangle qcNorm.R
+ WIDTH <- 1000
+ HEIGHT <- 1414
+ POINTSIZE <- 24
+ if(!exists("maxArray")) maxArray <- 41
+ #+end_src
+** Generate plots for normalized data
+ Make a Box-plot of the normalized data
+ #+begin_src R :tangle qcNorm.R
+   if(boxplotNorm){
+     print ("   plot boxplot for normalized intensities")
+     boxplotFun(Data=normData, experimentFactor, plotColors, legendColors,
+	   normMeth=normMeth,WIDTH=WIDTH,HEIGHT=HEIGHT,POINTSIZE=POINTSIZE,
+	   MAXARRAY=maxArray)
+   }
+ #+end_src
+
+ Make a Density histogram of the normalized data
+ #+begin_src R :tangle qcNorm.R
+   if(densityNorm){
+     print ("   plot density histogram for normalized intensities")
+     densityFun(Data=normData, plotColors, normMeth=normMeth,
+       WIDTH=WIDTH,HEIGHT=HEIGHT,POINTSIZE=POINTSIZE,MAXARRAY=maxArray)
+     #densityFunUnsmoothed(Data=normData, plotColors, normMeth=normMeth,
+     #  WIDTH=WIDTH,HEIGHT=HEIGHT,POINTSIZE=POINTSIZE,MAXARRAY=maxArray)
+   }
+ #+end_src
+
+ Make separate MA-plots for each group on normalized data
+ #+begin_src R :tangle qcNorm.R
+   if(MANorm){
+     print ("   MA-plots for normalized intensities")
+     maFun(Data=normData, experimentFactor, perGroup=(MAOption1=="group"),
+	  normMeth=normMeth,WIDTH=WIDTH,HEIGHT=HEIGHT,MAXARRAY=maxArray)
+   }
+ #+end_src
+
+ Make correlation plots on normalized data
+ #+begin_src R :tangle qcNorm.R
+   if(correlNorm){
+     print ("   Correlation plot of normalized data")
+     correlFun(Data=normData, normMeth=normMeth, experimentFactor=experimentFactor, legendColors=legendColors,
+      WIDTH=WIDTH,HEIGHT=HEIGHT,POINTSIZE=POINTSIZE,MAXARRAY=maxArray)
+   }
+ #+end_src
+
+ PCA analysis of normalized data
+ #+begin_src R :tangle qcNorm.R
+   if(PCANorm){
+     print("   PCA graph for normalized data")
+     pcaFun(Data=normData, experimentFactor=experimentFactor,normMeth=normMeth,
+	   plotColors=plotColors, legendColors=legendColors, plotSymbols=plotSymbols,
+	   legendSymbols=legendSymbols, namesInPlot=((max(nchar(sampleNames(rawData)))<=10)&&
+	   (length(sampleNames(rawData))<=(maxArray/2))),WIDTH=WIDTH,HEIGHT=HEIGHT,
+	   POINTSIZE=POINTSIZE)
+   }
+ #+end_src
+
+ Make hierarchical clustering on normalized data
+ #+begin_src R :tangle qcNorm.R
+   if(clusterNorm){
+     print ("   Hierarchical clustering of normalized data")
+     clusterFun(Data=normData, experimentFactor=experimentFactor,
+     clusterOption1=clusterOption1, clusterOption2=clusterOption2,
+     normMeth=normMeth, plotColors = plotColors, legendColors = legendColors,
+     plotSymbols=plotSymbols, legendSymbols=legendSymbols,
+     WIDTH=WIDTH,HEIGHT=HEIGHT,POINTSIZE=POINTSIZE,MAXARRAY=maxArray)
+   }
+ }
+ #+end_src
+
+* Basic statistics
+* Advanced statistics
