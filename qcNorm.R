@@ -1,3 +1,73 @@
+    library(methods)
+    library(argparser)
+    options_ <- arg_parser("")
+    options_ <- add_argument(options_, "data_directory", help="Full path to directory with .cel files")
+    options_ <- add_argument(options_, "output_directory", help="Full path to the output directory")
+    options_ <- add_argument(options_, "description_file", help="Full path to description file")
+    options_ <- add_argument(options_, "--all", help="Generate all possible plots", flag=TRUE)
+    # Signal comparability and bias diagnostic
+    options_ <- add_argument(options_, "--boxplotNorm", help="Boolean for boxplot of normalized intensities", flag=TRUE)
+    options_ <- add_argument(options_, "--densityNorm", help="Boolean for density histogram of normalized intensities", flag=TRUE)
+    options_ <- add_argument(options_, "--MAnorm", help="Boolean for MA-plot", flag=TRUE)
+    options_ <- add_argument(options_, "--posnegCOI", help="Boolean for positive and negative control plots", flag=TRUE)
+    options_ <- add_argument(options_, "--PLMimage", help="Boolean for 2D PLM plots", flag=TRUE)
+    options_ <- add_argument(options_, "--spatialImage", help="Boolean for 2D images", flag=TRUE)
+    options_ <- add_argument(options_, "--Nuse", help="Boolean for Nuse plot", flag=TRUE)
+    options_ <- add_argument(options_, "--Rle", help="Boolean for RLE plot", flag=TRUE)
+    # Array correlation
+    options_ <- add_argument(options_, "--correlNorm", help="Boolean for correlation plot", flag=TRUE)
+    options_ <- add_argument(options_, "--PCANorm", help="Boolean for PCA analysis plot", flag=TRUE)
+    options_ <- add_argument(options_, "--clusterNorm", help="Boolean for hierarchical clustering", flag=TRUE)
+    # Other options
+    options_ <- add_argument(options_, "--Reorder", help="Reorder arrays by group", flag=TRUE)
+    options_ <- add_argument(options_, "--perGroup", help="Generate MAplot per group. Default is for dataset", flag=TRUE)
+    argv <- parse_args(options_)
+
+    DATA.DIR <-argv$data_directory
+    WORK.DIR <-argv$output_directory
+    description_file <- argv$description_file
+    SCRIPT.DIR <- "~/projects/sols/masters/4th_sem/scripts/"
+
+    if (isTRUE(argv$all)){
+    # Signal comparability and bias diagnostic
+      boxplotNorm <- TRUE
+      densityNorm <- TRUE
+      MARaw <- TRUE
+      posnegCOI <- TRUE
+      PLMimage <- TRUE
+      spatialImage <- TRUE
+      Nuse <- TRUE
+      Rle<- TRUE
+    # Array correlation
+      correlNorm <- TRUE
+      PCANorm <- TRUE
+      clusterNorm <- TRUE
+    } else {
+    # Hybridization and signal quality
+      percPres <- argv$percPres
+      posnegDistrib <- argv$posnegDist
+      controlPlot <- argv$control
+    # Signal comparability and bias diagnostic
+      boxplotNorm <- argv$box
+      densityNorm <- argv$density
+      MAnorm <- argv$MARaw
+      posnegCOI <- argv$posnegCOI
+      PLMimage<- argv$PLMimage
+      spatialImage <- argv$spatialImage
+      Nuse <- argv$Nuse
+      Rle<- argv$Rle
+    # Array correlation
+      correlNorm <- argv$correl
+      PCANorm <- argv$PCA
+      clusterNorm <- argv$cluster
+    }
+
+    # Other options
+    reOrder <- argv$Reorder
+    MAOption1 <- argv$perGroup
+    clusterOption1 <- "Spearman" #see comments below
+    clusterOption2 <- "ward" #see comments below
+
  version_nb <- "1.0.0"
  cat("Script run using R version ",R.Version()$major,".",R.Version()$minor,
    " and affyAnalysisQC version_",version_nb,"\n",sep="")
