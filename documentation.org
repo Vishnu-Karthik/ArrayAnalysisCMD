@@ -856,7 +856,7 @@ Print the version and set memory to maximum on windows x86 systems
  #+end_src
 
  Create array groups and array names
- #+begin_src R :tangle ~/projects/sols/masters/4th_sem/scripts/qcNorm.R
+ #+begin_src R :tangle qcNorm.R
  if(description_file !=""){
    # Information is available: groups will be created
    # 1- read the description file and trim spaces
@@ -908,7 +908,7 @@ Print the version and set memory to maximum on windows x86 systems
  #+end_src
 
  Create colorset and symbolset for the array groups
- #+begin_src R :tangle ~/projects/sols/masters/4th_sem/scripts/qcNorm.R
+ #+begin_src R :tangle qcNorm.R
  colList <- colorsByFactor(experimentFactor)
  plotColors <- colList$plotColors
  legendColors <- colList$legendColors
